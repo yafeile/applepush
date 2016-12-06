@@ -11,5 +11,5 @@ setup(
     author_email='yubang93@gmail.com',
     url='https://github.com/yubang/applepush',
     packages=find_packages(),
-    install_requires=['hyper', ],
+    install_requires=['hyper'],
 )

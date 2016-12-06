@@ -8,7 +8,8 @@
 """
 
 from hyper import HTTPConnection, tls
-import re
+from hyper.http20.errors import get_data
+from errors import REASON
 import json
 
 
@@ -17,7 +18,7 @@ class ApplePush:
         self.cert = cert
         self.headers = {"apns-topic": apns_topic}
         self.api_url = 'api.development.push.apple.com:443'
-        self.api_path = '/3/device/%s'
+        self.api_path = '/3/device/{0}'
 
     def get_api_path(self, token):
         """
@@ -25,7 +26,7 @@ class ApplePush:
         :param token:
         :return:
         """
-        return self.api_path % token
+        return self.api_path.format(token)
 
     @staticmethod
     def make_response(r):
@@ -35,18 +36,15 @@ class ApplePush:
         :return:
         """
         data = r.read()
-        try:
-            data = json.loads(data)
-        except ValueError:
-            data = {}
         status = r.status
-
-        return {
-            "data": data,
-            "status": status,
-            "error_msg": data.get('reason', '未知错误') if data else None,
-            "headers": dict(r.headers)
-        }
+        if status > 200 and data:
+            data = json.loads(data)
+            error_msg=data.get('reason', '未知错误')
+            return dict(response='推送失败',
+                        error_msg=REASON.get(error_msg,'失败'),
+                        headers=dict(r.headers))
+        else:
+            return dict(response='推送成功')
 
     @staticmethod
     def handle_token(token):
@@ -55,16 +53,19 @@ class ApplePush:
         :param token: 苹果设备token
         :return:
         """
-        if re.match(r'<.*?>', token):
-            token = token[1:-1]
-        return token.replace(" ", '')
-
+        if token.startswith('<'):
+            token = token[1:]
+        if token.endswith('>'):
+            token = token[:-1]
+        token = ''.join(token.split())
+        return token
+    
     def single_push(self, token, alert, badge=1):
         """
             发送单个设备
-            :param token:设备
-            :param alert:弹出的消息
-            :param badge:红点数字
+            :param token:设备ID
+            :param alert:弹出的消息内容
+            :param badge:显示的消息数量
             :return:
             """
         token = self.handle_token(token)
@@ -75,10 +76,17 @@ class ApplePush:
                 'badge': badge,
             }
         }
-        conn = HTTPConnection(self.api_url, ssl_context=tls.init_context(cert=self.cert))
-        conn.request('POST', self.get_api_path(token), body=json.dumps(payload), headers=self.headers)
-        resp = conn.get_response()
-        return self.make_response(resp)
+        context = tls.init_context(cert=self.cert)
+        conn = HTTPConnection(self.api_url, ssl_context=context)
+        try:
+            conn.request('POST', self.get_api_path(token), 
+                         body=json.dumps(payload), 
+                         headers=self.headers)
+        except Exception as e:
+            return get_data(e)
+        else:
+            resp = conn.get_response()
+            return self.make_response(resp)
 
     @staticmethod
     def doc():
